@@ -40,6 +40,7 @@ import os
 import sys
 import datetime
 import getpass
+import importlib
 import tempfile
 
 from saspy.sasioiom      import SASsessionIOM
@@ -52,14 +53,6 @@ from saspy.sasstat       import SASstat
 from saspy.sasutil       import SASutil
 from saspy.sasViyaML     import SASViyaML
 from saspy.sasdata       import SASdata
-
-try:
-   import saspy.sascfg_personal as SAScfg
-except ImportError:
-   try:
-      import sascfg_personal as SAScfg
-   except ImportError:
-      import saspy.sascfg as SAScfg
 
 if os.name != 'nt':
    from saspy.sasiostdio import SASsessionSTDIO
@@ -96,6 +89,9 @@ class SASconfig:
         except Exception as e:
            self.pandas  = e
 
+        userdir =  os.path.expanduser('~/.config/saspy')
+        sys.path.insert(1, userdir)
+      
         cfgfile = kwargs.get('cfgfile', None)
         if cfgfile:
             tempdir = tempfile.TemporaryDirectory()
@@ -104,26 +100,34 @@ class SASconfig:
             except:
                 print("Couldn't open cfgfile " + cfgfile)
                 cfgfile = None
-
+         
             if cfgfile:
                 f1 = fdin.read()
-                fdout = open(tempdir.name + os.sep + "sascfgfile.py", 'w')
+                fdout = open(tempdir.name + os.sep + "sascfg_personal.py", 'w')
                 fdout.write(f1)
                 fdout.close()
                 fdin.close()
-                sys.path.append(tempdir.name)
-                import sascfgfile as SAScfg
-                tempdir.cleanup()
-                sys.path.remove(tempdir.name)
-
-        if not cfgfile:
+                sys.path.insert(0, tempdir.name)
+      
+        try:
+            import sascfg_personal as SAScfg
+            orig = __file__.rsplit('sasbase.py')[0]+'sascfg_personal.py'
+            if not cfgfile and os.path.isfile(orig) and os.path.abspath(orig) != os.path.abspath(SAScfg.__file__):
+               print("sascfg_personal.py in the saspy install dir was not used because another was found in the new search order")
+               print(str(SAScfg)+" was used instead of "+orig)
+            if cfgfile:
+               tempdir.cleanup()
+               sys.path.remove(tempdir.name)
+            sys.path.remove(userdir)
+        except ImportError:
+            if cfgfile:
+               tempdir.cleanup()
+               sys.path.remove(tempdir.name)
+            sys.path.remove(userdir)
             try:
                 import saspy.sascfg_personal as SAScfg
             except ImportError:
-                try:
-                    import sascfg_personal as SAScfg
-                except ImportError:
-                    import saspy.sascfg as SAScfg
+                import saspy.sascfg as SAScfg
 
         self.SAScfg = SAScfg
 
