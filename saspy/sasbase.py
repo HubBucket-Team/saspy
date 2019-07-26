@@ -1083,6 +1083,8 @@ class SASsession():
                             fmat += ';'
                         else:
                             raise TypeError("Bad key type. {} must be a str or dict type".format(key))
+                    else:
+                        opts += key+'='+str(dsopts[key]) + ' '
 
             if len(opts):
                 opts = '(' + opts + ')'
