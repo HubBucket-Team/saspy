@@ -40,13 +40,14 @@ import os
 import sys
 import datetime
 import getpass
-import importlib
+import shutil
 import tempfile
 
 from saspy.sasioiom      import SASsessionIOM
 from saspy.sasiocom      import SASSessionCOM
 from saspy.sasets        import SASets
-from saspy.sasexceptions import SASIONotSupportedError, SASConfigNotValidError
+from saspy.sasexceptions import (SASIONotSupportedError, SASConfigNotValidError,
+                                SASConfigNotFoundError)
 from saspy.sasml         import SASml
 from saspy.sasqc         import SASqc
 from saspy.sasstat       import SASstat
@@ -72,10 +73,31 @@ def zepDISPLAY(x):
 def zepHTML(x):
    return("%html "+x)
 
-class SASconfig:
+def list_configs() -> list:
+   cfg   = []
+   sp    = []
+   sp[:] = sys.path
+   sp[0] = os.path.abspath(sp[0])
+   sp.insert(1, os.path.expanduser('~/.config/saspy'))
+   sp.append(__file__.rsplit('/sasbase.py')[0])
+
+   for dir in sp:
+      f1 = dir+os.sep+'sascfg_personal.py'
+      if os.path.isfile(f1):
+         cfg.append(f1)
+
+   if len(cfg) == 0:
+      f1 =__file__.rsplit('sasbase.py')[0]+'sascfg.py'
+      if os.path.isfile(f1):
+         cfg.append(f1)
+
+   return cfg
+
+class SASconfig(object):
     """
     This object is not intended to be used directly. Instantiate a SASsession object instead
     """
+    DOTCONFIG = '~/.config/saspy/'
 
     def __init__(self, **kwargs):
         self._kernel = kwargs.get('kernel', None)
@@ -89,45 +111,79 @@ class SASconfig:
         except Exception as e:
            self.pandas  = e
 
-        userdir =  os.path.expanduser('~/.config/saspy')
-        sys.path.insert(1, userdir)
-      
-        cfgfile = kwargs.get('cfgfile', None)
-        if cfgfile:
+        cfg_override=kwargs.get('cfgfile')
+        """
+        Locate the user's preferred configuration file if possible, falling
+        back through a hierarchy of configuration file locations. The heirarchy
+        is as follows:
+            1. If a `cfgfile` param is provided to `sas.SASsession()`, use this
+               configuration or nothing else. If the configuration path is
+               invalid, raise an exception.
+            2. If no `cfgfile` param is provided, search for a "personal" config
+               in the local scope (`sys.path[0]`). This is mainly to support a
+               local project config that differs from a more general one.
+            3. If no config file is found locally, search for a "personal"
+               config in the user's $HOME/.config/saspy directory.
+            4. In no config file is found in .config, search for a "personal"
+               config anywhere in `sys.path`.
+            5. If no config file is found in `sys.path`, search for a "personal"
+               config in the saspy library path.
+            6. Finally, fall back to the standard `sascfg.py` file in the
+               library path.
+        :option cfg_override: The provided `cfgfile` param to `sas.SASsession()`
+        :return [module]:
+        """
+        if cfg_override is not None:
+            # Option 1
+            #
+            # This is the original arbitrary import method, which copies a
+            # given config file to a temp location and imports. This method
+            # can be significantly cleaner if using the builtin importlib
+            # functions, but we must support Python versions <= 3.4 (all EOL).
+            cfg_expand = os.path.expanduser(cfg_override)
+
+            # Check file exists before proceeding
+            if not os.path.exists(cfg_expand):
+                raise SASConfigNotFoundError(cfg_expand)
+
             tempdir = tempfile.TemporaryDirectory()
+
+            shutil.copyfile(cfg_expand, os.path.join(tempdir.name, 'sascfgfile.py'))
+            sys.path.append(tempdir.name)
+
+            import sascfgfile as SAScfg
+
+            sys.path.remove(tempdir.name)
+            tempdir.cleanup()
+
+        else:
+            # Options 2, 3, 4, 5, 6
+            # If more than one eligible personalized configuration exists on
+            # the system, let the user know which one will be used.
+            configs = [x for x in list_configs() if os.path.basename(x) != 'sascfg.py']
+            if len(configs) > 1:
+                print('Multiple personalized saspy configuration files found. The first ' \
+                    'configuration in the list below was selected:\n* {}\n  {}'.format(
+                        configs[0],
+                        '\n  '.join(configs[1:])))
+
+            # Insert saspy config folder behind any local configs but ahead of other
+            # configurations on the system.
+            cfg_path = os.path.expanduser(self.DOTCONFIG)
+            sys.path.insert(1, cfg_path)
+
             try:
-                fdin = open(cfgfile)
-            except:
-                print("Couldn't open cfgfile " + cfgfile)
-                cfgfile = None
-         
-            if cfgfile:
-                f1 = fdin.read()
-                fdout = open(tempdir.name + os.sep + "sascfg_personal.py", 'w')
-                fdout.write(f1)
-                fdout.close()
-                fdin.close()
-                sys.path.insert(0, tempdir.name)
-      
-        try:
-            import sascfg_personal as SAScfg
-            orig = __file__.rsplit('sasbase.py')[0]+'sascfg_personal.py'
-            if not cfgfile and os.path.isfile(orig) and os.path.abspath(orig) != os.path.abspath(SAScfg.__file__):
-               print("sascfg_personal.py in the saspy install dir was not used because another was found in the new search order")
-               print(str(SAScfg)+" was used instead of "+orig)
-            if cfgfile:
-               tempdir.cleanup()
-               sys.path.remove(tempdir.name)
-            sys.path.remove(userdir)
-        except ImportError:
-            if cfgfile:
-               tempdir.cleanup()
-               sys.path.remove(tempdir.name)
-            sys.path.remove(userdir)
-            try:
-                import saspy.sascfg_personal as SAScfg
+                # Option 2, 3, 4
+                import sascfg_personal as SAScfg
             except ImportError:
-                import saspy.sascfg as SAScfg
+                # Options 5, 6
+                # Fall back to one of the global configs
+                try:
+                    import saspy.sascfg_personal as SAScfg
+                except ImportError:
+                    import saspy.sascfg as SAScfg
+            finally:
+                sys.path.remove(cfg_path)
 
         self.SAScfg = SAScfg
 
@@ -424,6 +480,7 @@ class SASsession():
 
         x  = "Access Method         = %s\n" % self.sascfg.mode
         x += "SAS Config name       = %s\n" % self.sascfg.name
+        x += "SAS Config file       = %s\n" % self.sascfg.SAScfg
         x += "WORK Path             = %s\n" % self.workpath
         x += "SAS Version           = %s\n" % self.sasver
         x += "SASPy Version         = %s\n" % self.version
