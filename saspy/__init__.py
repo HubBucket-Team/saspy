@@ -44,12 +44,12 @@ if isnotebook():
     from saspy.sas_magic import SASMagic
     get_ipython().register_magics(SASMagic)
 
-def _findcfg():
+def _find_cfg():
    sp    = []
    sp[:] = sys.path
    sp[0] = os.path.abspath(sp[0])
    sp.insert(1, os.path.expanduser('~/.config/saspy'))
-   sp.append(__file__.rsplit('/__init__.py')[0])
+   sp.insert(0, __file__.rsplit(os.sep+'__init__.py')[0])
 
    cfg = 'Not found'
 
@@ -66,4 +66,4 @@ def _findcfg():
 
    return cfg
 
-SAScfg = _findcfg()
+SAScfg = _find_cfg()
